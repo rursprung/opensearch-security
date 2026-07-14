@@ -39,6 +39,7 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 import com.google.common.base.Strings;
 import com.google.common.cache.Cache;
@@ -57,6 +58,7 @@ import org.opensearch.common.util.concurrent.ThreadContext;
 import org.opensearch.core.common.transport.TransportAddress;
 import org.opensearch.core.rest.RestStatus;
 import org.opensearch.identity.UserSubject;
+import org.opensearch.security.DefaultObjectMapper;
 import org.opensearch.security.auditlog.AuditLog;
 import org.opensearch.security.auth.blocking.ClientBlockRegistry;
 import org.opensearch.security.auth.internal.NoOpAuthenticationBackend;
@@ -415,6 +417,11 @@ public class BackendRegistry {
                     }
 
                 }
+
+                // handle header-based attributes
+                for (final var entry : extractUserAttributesFromHeaders(request).entrySet()) {
+                    ac.addAttribute(entry.getKey(), entry.getValue());
+                }
             }
 
             /*
@@ -567,6 +574,28 @@ public class BackendRegistry {
         }
 
         return authenticated;
+    }
+
+    private Map<String, String> extractUserAttributesFromHeaders(final SecurityRequest request) {
+        final var authorizedHeaders = Set.of("X-Example-Header".toUpperCase()); // FIXME: must come from config
+        return request.getHeaders()
+                .entrySet()
+                .stream()
+                .peek(e -> log.warn("processing header {}={}", e.getKey(), e.getValue()))
+                .filter(entry -> authorizedHeaders.contains(entry.getKey().toUpperCase()))
+                .peek(e -> log.warn("didn't filter out header {}={}, keeping it as {}", e.getKey(), e.getValue(), "attr.header." + e.getKey().toLowerCase()))
+                .collect(Collectors.toMap(
+                        entry -> "attr.header." + entry.getKey().toLowerCase(),
+                        entry -> flattenUserAttributeHeader(entry.getValue())
+                ));
+    }
+
+    private String flattenUserAttributeHeader(final List<String> values) {
+        if (values.size() == 1) {
+            return values.getFirst();
+        }
+
+        return DefaultObjectMapper.writeValueAsString(values, false);
     }
 
     /**
